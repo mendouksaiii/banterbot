@@ -87,11 +87,15 @@ async function main() {
       let userText = "";
       let media: any = undefined;
 
-      if (message.content.type === "text") {
-        userText = (message.content as any).text || "";
-      } else if (message.content.type === "attachment" || message.content.type === "voice") {
-        userText = (message.content as any).caption || "";
-        const att = message.content as any;
+      const c = message.content as any;
+      if (typeof c === "string") {
+        userText = c;
+      } else if (c) {
+        userText = c.text || c.caption || c.body || c.message || "";
+      }
+
+      if (c && (c.type === "attachment" || c.type === "voice" || c.attachment)) {
+        const att = c.attachment || c;
         if (att.mimeType?.startsWith("image/") || att.mimeType?.startsWith("audio/")) {
           media = {
             mimeType: att.mimeType,
@@ -103,13 +107,13 @@ async function main() {
       const cleanText = userText.trim();
       const lower = cleanText.toLowerCase();
 
-      // 3. CRITICAL ANTI-SPAM: Discard empty carrier acknowledgments/MMS acks
+      // 3. CRITICAL ANTI-SPAM: Discard empty carrier acknowledgments/MMS acks ONLY if neither text NOR media exists
       if (!cleanText && (!media || !media.data || media.data.length === 0)) {
-        console.log(`[${message.platform}] Discarded empty carrier event (${message.content.type}) from ${senderId}`);
+        console.log(`[${message.platform}] Discarded empty carrier event (${message.content?.type || "unknown"}) from ${senderId}`);
         continue;
       }
 
-      console.log(`[${message.platform}] Received from ${senderId}: "${cleanText || (media ? `[Media: ${media.mimeType}]` : "")}"`);
+      console.log(`[${message.platform}] Received from ${senderId}: "${cleanText || (media ? `[Media: ${media.mimeType}]` : "")}" (type: ${c?.type || "text"})`);
 
       // 4. Opt-Out / STOP handling (Emergency stop button for users)
       if (
@@ -140,10 +144,10 @@ async function main() {
         continue;
       }
 
-      // 5. Rate limiting: Enforce minimum 3.5s cooldown per user to eliminate ping-pong loops
+      // 5. Rate limiting: Enforce minimum 1.5s cooldown per user to eliminate ping-pong carrier loops
       const lastReplyTime = lastUserReplyTimes.get(senderId) || 0;
       const now = Date.now();
-      if (now - lastReplyTime < 3500) {
+      if (now - lastReplyTime < 1500) {
         console.warn(`[Banterbot] Throttled rapid-fire incoming event from ${senderId} (${now - lastReplyTime}ms since last reply)`);
         continue;
       }
