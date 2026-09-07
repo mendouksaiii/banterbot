@@ -48,6 +48,10 @@ async function main() {
     console.error("⚠️ Uncaught Exception intercepted:", err);
   });
 
+  // In-memory anti-spam rate limiting & opt-out protection
+  const lastUserReplyTimes = new Map<string, number>();
+  const optedOutUsers = new Set<string>(["+2347056106926", "07056106926", "Bellaaddison788@gmail.com"]);
+
   let attempt = 0;
   while (true) {
     let app: any = null;
@@ -68,18 +72,24 @@ async function main() {
 
       for await (const [space, message] of app.messages) {
     try {
-      // Ignore messages sent by ourselves
+      // 1. Ignore messages sent by ourselves
       if ((message as any).isSelf || (message as any).sender?.isSelf) {
         continue;
       }
 
       const senderId = message.sender?.id || "friend";
+
+      // 2. Ignore non-conversational carrier/Apple events (read receipts, typing, reactions)
+      if (message.content.type === "read" || message.content.type === "typing" || message.content.type === "reaction") {
+        continue;
+      }
+
       let userText = "";
       let media: any = undefined;
 
       if (message.content.type === "text") {
         userText = (message.content as any).text || "";
-      } else if (message.content.type === "attachment") {
+      } else if (message.content.type === "attachment" || message.content.type === "voice") {
         userText = (message.content as any).caption || "";
         const att = message.content as any;
         if (att.mimeType?.startsWith("image/") || att.mimeType?.startsWith("audio/")) {
@@ -93,9 +103,53 @@ async function main() {
       const cleanText = userText.trim();
       const lower = cleanText.toLowerCase();
 
-      console.log(`[${message.platform}] Received from ${senderId}: "${cleanText || "[Media]"}"`);
+      // 3. CRITICAL ANTI-SPAM: Discard empty carrier acknowledgments/MMS acks
+      if (!cleanText && (!media || !media.data || media.data.length === 0)) {
+        console.log(`[${message.platform}] Discarded empty carrier event (${message.content.type}) from ${senderId}`);
+        continue;
+      }
 
-      // 1. Command handling
+      console.log(`[${message.platform}] Received from ${senderId}: "${cleanText || (media ? `[Media: ${media.mimeType}]` : "")}"`);
+
+      // 4. Opt-Out / STOP handling (Emergency stop button for users)
+      if (
+        lower === "stop" ||
+        lower === "stop it" ||
+        lower.includes("stop it") ||
+        lower.includes("don't send") ||
+        lower.includes("dont send") ||
+        lower === "unsubscribe" ||
+        lower === "cancel" ||
+        lower === "quit" ||
+        lower === "pause"
+      ) {
+        optedOutUsers.add(senderId);
+        console.log(`[Banterbot] User ${senderId} opted out.`);
+        await space.send("Understood. Lord Banterbot has silenced himself. Reply START at any time if you wish to return.");
+        continue;
+      }
+
+      // If user is opted out, only allow START/RESUME
+      if (optedOutUsers.has(senderId)) {
+        if (lower === "start" || lower === "resume" || lower === "unstop") {
+          optedOutUsers.delete(senderId);
+          await space.send("Welcome back to the roast arena, mortal. Proceed if you dare.");
+        } else {
+          console.log(`[Banterbot] Silently ignored message from opted-out user ${senderId}`);
+        }
+        continue;
+      }
+
+      // 5. Rate limiting: Enforce minimum 3.5s cooldown per user to eliminate ping-pong loops
+      const lastReplyTime = lastUserReplyTimes.get(senderId) || 0;
+      const now = Date.now();
+      if (now - lastReplyTime < 3500) {
+        console.warn(`[Banterbot] Throttled rapid-fire incoming event from ${senderId} (${now - lastReplyTime}ms since last reply)`);
+        continue;
+      }
+      lastUserReplyTimes.set(senderId, now);
+
+      // 6. Command handling
       if (lower === "!stats" || lower === "stats") {
         const statsMsg = battleManager.getStatsMessage(senderId);
         await space.send(statsMsg);
@@ -237,7 +291,7 @@ async function main() {
         }
 
         // Send ambient outbound message
-        console.log(`[${new Date().toLocaleTimeString()}] 📤 Sending reply to ${senderId}`);
+        console.log(`[${new Date().toLocaleTimeString()}] 📤 Sending reply to ${senderId}: "${fullReply.slice(0, 80).replace(/\n/g, ' ')}..."`);
         await space.send(fullReply);
       });
     } catch (msgErr) {
