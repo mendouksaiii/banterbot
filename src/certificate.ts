@@ -37,7 +37,8 @@ export function createCertificate(data: CertificateData): Promise<string> {
       isWin ? "true" : "false",
     ];
 
-    execFile("python", args, (err, stdout, stderr) => {
+    const pythonCmd = process.platform === "win32" ? "python" : (fs.existsSync("/usr/bin/python3") ? "python3" : "python");
+    execFile(pythonCmd, args, (err, stdout, stderr) => {
       if (err) {
         console.error("Certificate generation error:", stderr || err.message);
         reject(err);
