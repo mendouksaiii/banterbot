@@ -9,6 +9,7 @@ const ROOT_DIR = path.resolve(__dirname, "..");
 let childProcess = null;
 let consecutiveFailures = 0;
 const MAX_FAILURES = 3;
+const CHECK_INTERVAL_MS = 30000;
 const PORT = process.env.PORT || 3000;
 const HEALTH_URL = `http://127.0.0.1:${PORT}/api/stats/health_check`;
 
